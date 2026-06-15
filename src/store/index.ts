@@ -62,7 +62,8 @@ interface AppState {
 
   runCompatibilityCheck: (buildId: string) => void
   runPerformanceEstimate: (buildId: string) => void
-  generateQuote: (buildId: string, clientName: string) => void
+  generateQuote: (buildId: string, clientName: string, settings?: { discountRate?: number; taxRate?: number; installationFee?: number; deposit?: number }) => void
+  setQuoteSettings: (buildId: string, settings: { discountRate: number; taxRate: number; installationFee: number; deposit: number }) => void
 
   getBuildComponents: (buildId: string) => { slot: Build['components'][0]; component: Component | null }[]
   getBuildTotalPrice: (buildId: string) => number
@@ -264,6 +265,13 @@ export const useAppStore = create<AppState>()(
         const newComponent = state.getComponentById(newComponentId)
         if (!oldComponent || !newComponent) return
         
+        if (oldComponent.inStock) {
+          state.updateComponent(oldComponentId, { stock: oldComponent.stock + 1 })
+        }
+        if (newComponent.inStock && newComponent.stock >= 1) {
+          state.updateComponent(newComponentId, { stock: newComponent.stock - 1 })
+        }
+        
         const historyEntry: Build['replacementHistory'][0] = {
           id: uuidv4(),
           slotId,
@@ -290,7 +298,7 @@ export const useAppStore = create<AppState>()(
                       ? { ...slot, componentId: newComponentId }
                       : slot
                   ),
-                  replacementHistory: [...b.replacementHistory, historyEntry],
+                  replacementHistory: [...(b.replacementHistory ?? []), historyEntry],
                   updatedAt: Date.now(),
                 }
               : b
@@ -359,6 +367,24 @@ export const useAppStore = create<AppState>()(
       },
 
       addComponentToBuild: (buildId, slotId, componentId, quantity = 1) => {
+        const existingSlot = get().builds.find((b) => b.id === buildId)?.components.find((s) => s.slotId === slotId)
+        const existingComponentId = existingSlot?.componentId
+        
+        if (existingComponentId && existingComponentId !== componentId) {
+          const existingComponent = get().getComponentById(existingComponentId)
+          if (existingComponent && existingComponent.inStock) {
+            get().updateComponent(existingComponentId, { stock: existingComponent.stock + (existingSlot?.quantity ?? 1) })
+          }
+        }
+        
+        const newComponent = get().getComponentById(componentId)
+        if (newComponent && newComponent.inStock) {
+          const currentStock = newComponent.stock
+          if (currentStock >= quantity) {
+            get().updateComponent(componentId, { stock: currentStock - quantity })
+          }
+        }
+        
         set((state) => ({
           builds: state.builds.map((b) => {
             if (b.id !== buildId) return b
@@ -380,6 +406,17 @@ export const useAppStore = create<AppState>()(
       },
 
       removeComponentFromBuild: (buildId, slotId) => {
+        const slot = get().builds.find((b) => b.id === buildId)?.components.find((s) => s.slotId === slotId)
+        const componentId = slot?.componentId
+        const quantity = slot?.quantity ?? 1
+        
+        if (componentId) {
+          const component = get().getComponentById(componentId)
+          if (component && component.inStock) {
+            get().updateComponent(componentId, { stock: component.stock + quantity })
+          }
+        }
+        
         set((state) => ({
           builds: state.builds.map((b) => {
             if (b.id !== buildId) return b
@@ -622,30 +659,70 @@ export const useAppStore = create<AppState>()(
         set({ performanceEstimate: estimate })
       },
 
-      generateQuote: (buildId, clientName) => {
-        const build = get().builds.find((b) => b.id === buildId)
+      generateQuote: (buildId, clientName, settings) => {
+        const state = get()
+        const build = state.builds.find((b) => b.id === buildId)
         if (!build) {
           set({ quoteData: null })
           return
         }
+        
+        const currentSettings = build.quoteSettings ?? {
+          discountRate: 0,
+          taxRate: 0,
+          installationFee: 0,
+          deposit: 0,
+        }
+        
+        const mergedSettings = settings
+          ? { ...currentSettings, ...settings }
+          : currentSettings
+        
+        if (settings) {
+          state.setQuoteSettings(buildId, mergedSettings)
+        }
+        
         const buildComponents = build.components
           .map((slot) => ({
             slot,
-            component: slot.componentId ? get().getComponentById(slot.componentId) : null,
+            component: slot.componentId ? state.getComponentById(slot.componentId) : null,
           }))
           .filter((x) => x.component !== null) as { slot: Build['components'][0]; component: Component }[]
-        const quote = generateQuote(build, buildComponents.map((x) => x.component), clientName)
-
-        const lastReplacement = get().lastReplacedComponent
-        if (lastReplacement && lastReplacement.buildId === buildId) {
-          const fromComp = get().getComponentById(lastReplacement.fromId)
-          const toComp = get().getComponentById(lastReplacement.toId)
-          if (fromComp && toComp) {
-            quote.notes += `\\n\\n📝 配件变更记录：由「${fromComp.name}」替换为「${toComp.name}」，差价 ¥${(toComp.price - fromComp.price).toLocaleString()}`
-          }
+        
+        const components = buildComponents.map((x) => x.component)
+        
+        const lowStockItems = components.filter((c) => c.inStock && c.stock < 3).map((c) => ({
+          name: c.name,
+          stock: c.stock,
+        }))
+        
+        const replacementItems = build.replacementHistory.map((r) => ({
+          oldName: r.oldComponentName,
+          newName: r.newComponentName,
+          priceDiff: r.priceDiff,
+        }))
+        
+        const totalPriceDiff = build.replacementHistory.reduce((sum, r) => sum + r.priceDiff, 0)
+        
+        const riskSummary = {
+          lowStockItems,
+          replacementItems,
+          totalPriceDiff,
         }
+        
+        const quote = generateQuote(build, components, clientName, mergedSettings, riskSummary)
 
         set({ quoteData: quote })
+      },
+
+      setQuoteSettings: (buildId, settings) => {
+        set((state) => ({
+          builds: state.builds.map((b) =>
+            b.id === buildId
+              ? { ...b, quoteSettings: settings, updatedAt: Date.now() }
+              : b
+          ),
+        }))
       },
 
       getBuildComponents: (buildId) => {

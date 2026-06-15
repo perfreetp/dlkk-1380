@@ -5,7 +5,9 @@ import { v4 as uuidv4 } from 'uuid'
 export function generateQuote(
   build: Build,
   components: Component[],
-  clientName: string
+  clientName: string,
+  settings?: { discountRate: number; taxRate: number; installationFee: number; deposit: number },
+  riskSummary?: QuoteData['riskSummary']
 ): QuoteData {
   const items: QuoteItem[] = components.map((c) => ({
     category: CATEGORY_LABELS[c.category] ?? c.category,
@@ -36,11 +38,17 @@ export function generateQuote(
   }))
 
   const subtotal = items.reduce((sum, i) => sum + i.totalPrice, 0)
-  const taxRate = 0
-  const taxAmount = Math.round(subtotal * taxRate * 100) / 100
-  const discountRate = 0
-  const discountAmount = Math.round(subtotal * discountRate * 100) / 100
-  const total = subtotal + taxAmount - discountAmount
+  const discountRate = settings?.discountRate ?? 0
+  const taxRate = settings?.taxRate ?? 0
+  const installationFee = settings?.installationFee ?? 0
+  const deposit = settings?.deposit ?? 0
+  
+  const discountAmount = Math.round(subtotal * (discountRate / 100) * 100) / 100
+  const amountAfterDiscount = subtotal - discountAmount + installationFee
+  const taxAmount = Math.round(amountAfterDiscount * (taxRate / 100) * 100) / 100
+  const totalBeforeDeposit = amountAfterDiscount + taxAmount
+  const total = totalBeforeDeposit
+  const balanceDue = totalBeforeDeposit - deposit
 
   const today = new Date()
   const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
@@ -59,7 +67,16 @@ export function generateQuote(
     taxAmount,
     discountRate,
     discountAmount,
+    installationFee,
+    deposit,
     total,
+    totalBeforeDeposit,
+    balanceDue,
+    riskSummary: riskSummary ?? {
+      lowStockItems: [],
+      replacementItems: [],
+      totalPriceDiff: 0,
+    },
     warrantyInfo: '所有配件享受原厂质保，整机享受一年免费上门服务',
     notes: build.description || '感谢您的惠顾！本报价单有效期7天。价格如有变动以实际为准。',
   }
@@ -129,6 +146,26 @@ export function generateQuoteHtml(quote: QuoteData): string {
   </div>
   ` : ''
 
+  const riskHtml = quote.riskSummary && (quote.riskSummary.lowStockItems.length > 0 || quote.riskSummary.replacementItems.length > 0)
+    ? `
+  <div style="margin-top: 30px; padding: 15px; background: #fff8e6; border: 1px solid #ffd93d; border-radius: 8px;">
+    <h3 style="color: #8b6914; margin: 0 0 12px 0; font-size: 16px;">⚠️ 风险提示</h3>
+    ${quote.riskSummary.lowStockItems.length > 0 ? `
+      <div style="margin-bottom: 10px;">
+        <strong style="color: #8b6914;">库存不足：</strong>
+        ${quote.riskSummary.lowStockItems.map((item) => `${item.name}（仅剩 ${item.stock} 件）`).join('、')}
+      </div>
+    ` : ''}
+    ${quote.riskSummary.replacementItems.length > 0 ? `
+      <div style="margin-bottom: 10px;">
+        <strong style="color: #8b6914;">配件替换：</strong>
+        共 ${quote.riskSummary.replacementItems.length} 项变更，
+        ${quote.riskSummary.totalPriceDiff > 0 ? `总价增加 +¥${quote.riskSummary.totalPriceDiff.toLocaleString()}` : quote.riskSummary.totalPriceDiff < 0 ? `总价减少 -¥${Math.abs(quote.riskSummary.totalPriceDiff).toLocaleString()}` : '总价无变化'}
+      </div>
+    ` : ''}
+  </div>
+  ` : ''
+
   return `
 <!DOCTYPE html>
 <html>
@@ -184,26 +221,48 @@ export function generateQuoteHtml(quote: QuoteData): string {
     </tbody>
   </table>
 
-  ${replacementHtml}
+  ${riskHtml}
 
   <div class="summary">
     <div class="summary-row">
       <span class="summary-label">商品小计:</span>
       <span class="summary-value">¥${quote.subtotal.toLocaleString()}</span>
     </div>
+    ${quote.installationFee > 0 ? `
+    <div class="summary-row">
+      <span class="summary-label">装机服务费:</span>
+      <span class="summary-value">+¥${quote.installationFee.toLocaleString()}</span>
+    </div>` : ''}
     ${quote.discountAmount > 0 ? `
     <div class="summary-row">
-      <span class="summary-label">优惠折扣:</span>
-      <span class="summary-value">-¥${quote.discountAmount.toLocaleString()}</span>
+      <span class="summary-label">优惠折扣 (${quote.discountRate}%):</span>
+      <span class="summary-value" style="color: #2a9d8f;">-¥${quote.discountAmount.toLocaleString()}</span>
+    </div>` : ''}
+    ${quote.taxAmount > 0 ? `
+    <div class="summary-row">
+      <span class="summary-label">税费 (${quote.taxRate}%):</span>
+      <span class="summary-value" style="color: #e63946;">+¥${quote.taxAmount.toLocaleString()}</span>
+    </div>` : ''}
+    ${quote.deposit > 0 ? `
+    <div class="summary-row">
+      <span class="summary-label">已收定金:</span>
+      <span class="summary-value" style="color: #2a9d8f;">-¥${quote.deposit.toLocaleString()}</span>
     </div>` : ''}
     <div class="summary-row summary-total">
       <span class="summary-label">应付总计:</span>
       <span class="summary-value">¥${quote.total.toLocaleString()}</span>
     </div>
+    ${quote.deposit > 0 ? `
+    <div class="summary-row" style="font-size: 13px; color: #666; margin-top: 5px;">
+      <span class="summary-label">尾款:</span>
+      <span class="summary-value">¥${quote.balanceDue.toLocaleString()}</span>
+    </div>` : ''}
     <div style="margin-top: 10px; font-size: 12px; color: #666;">
       大写金额：${numberToChinese(quote.total)}元整
     </div>
   </div>
+
+  ${replacementHtml}
 
   <div class="footer">
     <p><strong>质保说明：</strong>${quote.warrantyInfo}</p>

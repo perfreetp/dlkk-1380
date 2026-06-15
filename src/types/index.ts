@@ -316,6 +316,12 @@ export interface Build {
   budgetLimit?: number
   brandPreferences?: string[]
   replacementHistory: ReplacementHistoryEntry[]
+  quoteSettings?: {
+    discountRate: number
+    taxRate: number
+    installationFee: number
+    deposit: number
+  }
   createdAt: number
   updatedAt: number
   isFavorite: boolean
@@ -378,7 +384,16 @@ export interface QuoteData {
   taxAmount: number
   discountRate: number
   discountAmount: number
+  installationFee: number
+  deposit: number
   total: number
+  totalBeforeDeposit: number
+  balanceDue: number
   warrantyInfo: string
   notes: string
+  riskSummary: {
+    lowStockItems: { name: string; stock: number }[]
+    replacementItems: { oldName: string; newName: string; priceDiff: number }[]
+    totalPriceDiff: number
+  }
 }

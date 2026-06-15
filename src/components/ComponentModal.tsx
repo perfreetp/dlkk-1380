@@ -83,8 +83,8 @@ const REQUIRED_SPECS: Record<ComponentCategory, { field: string; label: string }
     { field: 'tdp', label: 'TDP 功耗' },
     { field: 'length', label: '显卡长度' },
     { field: 'pcieSlot', label: 'PCIe 插槽' },
-    { field: 'memorySize', label: '显存容量' },
-    { field: 'memoryType', label: '显存类型' },
+    { field: 'vram', label: '显存容量' },
+    { field: 'vramType', label: '显存类型' },
   ],
   ram: [
     { field: 'memoryType', label: '内存类型' },
@@ -95,7 +95,7 @@ const REQUIRED_SPECS: Record<ComponentCategory, { field: string; label: string }
   storage: [
     { field: 'interface', label: '接口类型' },
     { field: 'capacity', label: '容量' },
-    { field: 'type', label: '存储类型' },
+    { field: 'storageType', label: '存储类型' },
     { field: 'formFactor', label: '尺寸规格' },
   ],
   psu: [
@@ -105,8 +105,8 @@ const REQUIRED_SPECS: Record<ComponentCategory, { field: string; label: string }
   ],
   case: [
     { field: 'formFactor', label: '支持板型' },
-    { field: 'maxGpuLength', label: '显卡限长' },
-    { field: 'maxCoolerHeight', label: '散热器限高' },
+    { field: 'gpuMaxLength', label: '显卡限长' },
+    { field: 'cpuCoolerMaxHeight', label: '散热器限高' },
   ],
   cooler: [
     { field: 'type', label: '散热类型' },
