@@ -113,6 +113,21 @@ export type CoolerType =
   | 'AIO 360mm'
   | 'Custom Loop'
 
+export interface StockTransaction {
+  id: string
+  componentId: string
+  componentName: string
+  type: 'add_to_build' | 'remove_from_build' | 'replace_old' | 'replace_new' | 'duplicate_build' | 'delete_build' | 'manual_adjust' | 'create_component'
+  quantity: number
+  stockBefore: number
+  stockAfter: number
+  buildId?: string
+  buildName?: string
+  relatedComponentId?: string
+  relatedComponentName?: string
+  timestamp: number
+}
+
 export interface BaseComponent {
   id: string
   category: ComponentCategory
@@ -120,6 +135,7 @@ export interface BaseComponent {
   brand: string
   model: string
   price: number
+  costPrice?: number
   stock: number
   inStock: boolean
   alternativeIds: string[]
@@ -354,6 +370,10 @@ export interface QuoteItem {
   quantity: number
   unitPrice: number
   totalPrice: number
+  costPrice?: number
+  totalCost?: number
+  profit?: number
+  profitRate?: number
   warranty?: string
 }
 
@@ -389,10 +409,14 @@ export interface QuoteData {
   total: number
   totalBeforeDeposit: number
   balanceDue: number
+  totalCost: number
+  totalProfit: number
+  overallProfitRate: number
   warrantyInfo: string
   notes: string
   riskSummary: {
     lowStockItems: { name: string; stock: number }[]
+    outOfStockItems: { name: string }[]
     replacementItems: { oldName: string; newName: string; priceDiff: number }[]
     totalPriceDiff: number
   }

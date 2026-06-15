@@ -109,18 +109,20 @@ const REQUIRED_SPECS: Record<ComponentCategory, { field: string; label: string }
     { field: 'cpuCoolerMaxHeight', label: '散热器限高' },
   ],
   cooler: [
-    { field: 'type', label: '散热类型' },
+    { field: 'coolerType', label: '散热类型' },
     { field: 'tdpRating', label: '散热能力' },
-    { field: 'heightOrRadiatorSize', label: '高度/冷排尺寸' },
-    { field: 'supportedSockets', label: '支持接口' },
+    { field: 'sockets', label: '支持接口' },
+    { field: 'fans', label: '风扇数' },
   ],
   os: [
+    { field: 'osType', label: '系统类型' },
     { field: 'edition', label: '版本' },
   ],
   monitor: [
     { field: 'size', label: '屏幕尺寸' },
     { field: 'resolution', label: '分辨率' },
     { field: 'panelType', label: '面板类型' },
+    { field: 'refreshRate', label: '刷新率' },
   ],
 }
 
@@ -1397,6 +1399,18 @@ function ComponentModal({ component, onSave, onClose }: Props) {
                     min={0}
                     value={formData.stock}
                     onChange={(e) => handleChange('stock', Number(e.target.value))}
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="label">进货成本 (¥)</label>
+                  <input
+                    className="input"
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    placeholder="选填，用于利润计算"
+                    value={formData.costPrice ?? ''}
+                    onChange={(e) => handleChange('costPrice', e.target.value ? Number(e.target.value) : undefined)}
                   />
                 </div>
               </div>

@@ -9,16 +9,26 @@ export function generateQuote(
   settings?: { discountRate: number; taxRate: number; installationFee: number; deposit: number },
   riskSummary?: QuoteData['riskSummary']
 ): QuoteData {
-  const items: QuoteItem[] = components.map((c) => ({
-    category: CATEGORY_LABELS[c.category] ?? c.category,
-    name: c.name,
-    brand: c.brand,
-    model: c.model,
-    quantity: build.components.find((s) => s.componentId === c.id)?.quantity ?? 1,
-    unitPrice: c.price,
-    totalPrice: c.price * (build.components.find((s) => s.componentId === c.id)?.quantity ?? 1),
-    warranty: '1年质保',
-  }))
+  const items: QuoteItem[] = components.map((c) => {
+    const qty = build.components.find((s) => s.componentId === c.id)?.quantity ?? 1
+    const totalCost = (c.costPrice ?? 0) * qty
+    const profit = c.price * qty - totalCost
+    const profitRate = totalCost > 0 ? Math.round((profit / totalCost) * 10000) / 100 : 0
+    return {
+      category: CATEGORY_LABELS[c.category] ?? c.category,
+      name: c.name,
+      brand: c.brand,
+      model: c.model,
+      quantity: qty,
+      unitPrice: c.price,
+      totalPrice: c.price * qty,
+      costPrice: c.costPrice,
+      totalCost: totalCost > 0 ? totalCost : undefined,
+      profit: totalCost > 0 ? profit : undefined,
+      profitRate: totalCost > 0 ? profitRate : undefined,
+      warranty: '1年质保',
+    }
+  })
 
   const replacementHistory: ReplacementRecord[] = (build.replacementHistory ?? []).map((entry) => ({
     id: entry.id,
@@ -38,6 +48,10 @@ export function generateQuote(
   }))
 
   const subtotal = items.reduce((sum, i) => sum + i.totalPrice, 0)
+  const totalCost = items.reduce((sum, i) => sum + (i.totalCost ?? 0), 0)
+  const totalProfit = subtotal - totalCost
+  const overallProfitRate = totalCost > 0 ? Math.round((totalProfit / totalCost) * 10000) / 100 : 0
+  
   const discountRate = settings?.discountRate ?? 0
   const taxRate = settings?.taxRate ?? 0
   const installationFee = settings?.installationFee ?? 0
@@ -72,8 +86,12 @@ export function generateQuote(
     total,
     totalBeforeDeposit,
     balanceDue,
+    totalCost,
+    totalProfit,
+    overallProfitRate,
     riskSummary: riskSummary ?? {
       lowStockItems: [],
+      outOfStockItems: [],
       replacementItems: [],
       totalPriceDiff: 0,
     },
@@ -146,10 +164,16 @@ export function generateQuoteHtml(quote: QuoteData): string {
   </div>
   ` : ''
 
-  const riskHtml = quote.riskSummary && (quote.riskSummary.lowStockItems.length > 0 || quote.riskSummary.replacementItems.length > 0)
+  const riskHtml = quote.riskSummary && (quote.riskSummary.lowStockItems.length > 0 || quote.riskSummary.outOfStockItems.length > 0 || quote.riskSummary.replacementItems.length > 0)
     ? `
   <div style="margin-top: 30px; padding: 15px; background: #fff8e6; border: 1px solid #ffd93d; border-radius: 8px;">
     <h3 style="color: #8b6914; margin: 0 0 12px 0; font-size: 16px;">⚠️ 风险提示</h3>
+    ${quote.riskSummary.outOfStockItems && quote.riskSummary.outOfStockItems.length > 0 ? `
+      <div style="margin-bottom: 10px; color: #e63946;">
+        <strong>缺货配件：</strong>
+        ${quote.riskSummary.outOfStockItems.map((item) => item.name).join('、')}
+      </div>
+    ` : ''}
     ${quote.riskSummary.lowStockItems.length > 0 ? `
       <div style="margin-bottom: 10px;">
         <strong style="color: #8b6914;">库存不足：</strong>

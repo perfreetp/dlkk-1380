@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { Component, Build, CompatibilityIssue, PerformanceEstimate, QuoteData, ComponentCategory } from '@/types'
+import type { Component, Build, CompatibilityIssue, PerformanceEstimate, QuoteData, ComponentCategory, StockTransaction } from '@/types'
 import { CATEGORY_ORDER, CATEGORY_LABELS } from '@/types'
 import { sampleComponents } from '@/data/sampleComponents'
 import { checkCompatibility } from '@/utils/compatibility'
@@ -22,6 +22,7 @@ interface AppState {
   performanceEstimate: PerformanceEstimate | null
   quoteData: QuoteData | null
   lastReplacedComponent: { fromId: string; toId: string; buildId: string } | null
+  stockTransactions: StockTransaction[]
 
   addComponent: (component: Omit<Component, 'id' | 'createdAt' | 'updatedAt'>) => void
   updateComponent: (id: string, updates: Partial<Component>) => void
@@ -72,6 +73,9 @@ interface AppState {
   getCurrentBuild: () => Build | null
   getBuildsByCategory: (category: ComponentCategory | 'all') => Build[]
   refreshAllEstimates: (buildId: string) => void
+  recordStockTransaction: (params: Omit<StockTransaction, 'id' | 'timestamp'>) => void
+  getStockTransactions: (componentId: string) => StockTransaction[]
+  getBuildsUsingComponent: (componentId: string) => Build[]
 }
 
 function createEmptyBuildComponents(): Build['components'] {
@@ -101,11 +105,12 @@ export const useAppStore = create<AppState>()(
       filterCategory: 'all',
       filterBrand: '',
       filterInStockOnly: false,
-      sortByBrandPreference: true,
+      sortByBrandPreference: false,
       compatibilityIssues: [],
       performanceEstimate: null,
       quoteData: null,
       lastReplacedComponent: null,
+      stockTransactions: [],
 
       addComponent: (component) => {
         const now = Date.now()
@@ -261,15 +266,42 @@ export const useAppStore = create<AppState>()(
 
       replaceComponentInBuild: (buildId, slotId, oldComponentId, newComponentId, reason = 'other') => {
         const state = get()
+        const build = state.builds.find((b) => b.id === buildId)
         const oldComponent = state.getComponentById(oldComponentId)
         const newComponent = state.getComponentById(newComponentId)
         if (!oldComponent || !newComponent) return
         
         if (oldComponent.inStock) {
-          state.updateComponent(oldComponentId, { stock: oldComponent.stock + 1 })
+          const stockBefore = oldComponent.stock
+          state.updateComponent(oldComponentId, { stock: stockBefore + 1 })
+          state.recordStockTransaction({
+            componentId: oldComponentId,
+            componentName: oldComponent.name,
+            type: 'replace_old',
+            quantity: 1,
+            stockBefore,
+            stockAfter: stockBefore + 1,
+            buildId,
+            buildName: build?.name,
+            relatedComponentId: newComponentId,
+            relatedComponentName: newComponent.name,
+          })
         }
         if (newComponent.inStock && newComponent.stock >= 1) {
-          state.updateComponent(newComponentId, { stock: newComponent.stock - 1 })
+          const stockBefore = newComponent.stock
+          state.updateComponent(newComponentId, { stock: stockBefore - 1 })
+          state.recordStockTransaction({
+            componentId: newComponentId,
+            componentName: newComponent.name,
+            type: 'replace_new',
+            quantity: 1,
+            stockBefore,
+            stockAfter: stockBefore - 1,
+            buildId,
+            buildName: build?.name,
+            relatedComponentId: oldComponentId,
+            relatedComponentName: oldComponent.name,
+          })
         }
         
         const historyEntry: Build['replacementHistory'][0] = {
@@ -348,6 +380,29 @@ export const useAppStore = create<AppState>()(
       },
 
       deleteBuild: (id) => {
+        const build = get().builds.find((b) => b.id === id)
+        if (build) {
+          build.components.forEach((slot) => {
+            if (slot.componentId) {
+              const comp = get().getComponentById(slot.componentId)
+              if (comp && comp.inStock) {
+                const stockBefore = comp.stock
+                const qty = slot.quantity ?? 1
+                get().updateComponent(slot.componentId, { stock: stockBefore + qty })
+                get().recordStockTransaction({
+                  componentId: slot.componentId,
+                  componentName: comp.name,
+                  type: 'delete_build',
+                  quantity: qty,
+                  stockBefore,
+                  stockAfter: stockBefore + qty,
+                  buildId: id,
+                  buildName: build.name,
+                })
+              }
+            }
+          })
+        }
         set((state) => {
           const builds = state.builds.filter((b) => b.id !== id)
           const currentBuildId = state.currentBuildId === id ? (builds[0]?.id ?? null) : state.currentBuildId
@@ -367,13 +422,26 @@ export const useAppStore = create<AppState>()(
       },
 
       addComponentToBuild: (buildId, slotId, componentId, quantity = 1) => {
-        const existingSlot = get().builds.find((b) => b.id === buildId)?.components.find((s) => s.slotId === slotId)
+        const build = get().builds.find((b) => b.id === buildId)
+        const existingSlot = build?.components.find((s) => s.slotId === slotId)
         const existingComponentId = existingSlot?.componentId
         
         if (existingComponentId && existingComponentId !== componentId) {
           const existingComponent = get().getComponentById(existingComponentId)
           if (existingComponent && existingComponent.inStock) {
-            get().updateComponent(existingComponentId, { stock: existingComponent.stock + (existingSlot?.quantity ?? 1) })
+            const stockBefore = existingComponent.stock
+            const qty = existingSlot?.quantity ?? 1
+            get().updateComponent(existingComponentId, { stock: stockBefore + qty })
+            get().recordStockTransaction({
+              componentId: existingComponentId,
+              componentName: existingComponent.name,
+              type: 'remove_from_build',
+              quantity: qty,
+              stockBefore,
+              stockAfter: stockBefore + qty,
+              buildId,
+              buildName: build?.name,
+            })
           }
         }
         
@@ -382,6 +450,16 @@ export const useAppStore = create<AppState>()(
           const currentStock = newComponent.stock
           if (currentStock >= quantity) {
             get().updateComponent(componentId, { stock: currentStock - quantity })
+            get().recordStockTransaction({
+              componentId,
+              componentName: newComponent.name,
+              type: 'add_to_build',
+              quantity,
+              stockBefore: currentStock,
+              stockAfter: currentStock - quantity,
+              buildId,
+              buildName: build?.name,
+            })
           }
         }
         
@@ -406,14 +484,26 @@ export const useAppStore = create<AppState>()(
       },
 
       removeComponentFromBuild: (buildId, slotId) => {
-        const slot = get().builds.find((b) => b.id === buildId)?.components.find((s) => s.slotId === slotId)
+        const build = get().builds.find((b) => b.id === buildId)
+        const slot = build?.components.find((s) => s.slotId === slotId)
         const componentId = slot?.componentId
         const quantity = slot?.quantity ?? 1
         
         if (componentId) {
           const component = get().getComponentById(componentId)
           if (component && component.inStock) {
-            get().updateComponent(componentId, { stock: component.stock + quantity })
+            const stockBefore = component.stock
+            get().updateComponent(componentId, { stock: stockBefore + quantity })
+            get().recordStockTransaction({
+              componentId,
+              componentName: component.name,
+              type: 'remove_from_build',
+              quantity,
+              stockBefore,
+              stockAfter: stockBefore + quantity,
+              buildId,
+              buildName: build?.name,
+            })
           }
         }
         
@@ -494,6 +584,30 @@ export const useAppStore = create<AppState>()(
           replacementHistory: [],
         }
         set((state) => ({ builds: [...state.builds, duplicated] }))
+        
+        source.components.forEach((slot) => {
+          if (slot.componentId) {
+            const comp = get().getComponentById(slot.componentId)
+            if (comp && comp.inStock) {
+              const stockBefore = comp.stock
+              const qty = slot.quantity ?? 1
+              if (stockBefore >= qty) {
+                get().updateComponent(slot.componentId, { stock: stockBefore - qty })
+                get().recordStockTransaction({
+                  componentId: slot.componentId,
+                  componentName: comp.name,
+                  type: 'duplicate_build',
+                  quantity: qty,
+                  stockBefore,
+                  stockAfter: stockBefore - qty,
+                  buildId: newId,
+                  buildName: duplicated.name,
+                })
+              }
+            }
+          }
+        })
+        
         return newId
       },
 
@@ -691,9 +805,13 @@ export const useAppStore = create<AppState>()(
         
         const components = buildComponents.map((x) => x.component)
         
-        const lowStockItems = components.filter((c) => c.inStock && c.stock < 3).map((c) => ({
+        const lowStockItems = components.filter((c) => c.inStock && c.stock < 3 && c.stock > 0).map((c) => ({
           name: c.name,
           stock: c.stock,
+        }))
+        
+        const outOfStockItems = components.filter((c) => !c.inStock || c.stock <= 0).map((c) => ({
+          name: c.name,
         }))
         
         const replacementItems = build.replacementHistory.map((r) => ({
@@ -706,6 +824,7 @@ export const useAppStore = create<AppState>()(
         
         const riskSummary = {
           lowStockItems,
+          outOfStockItems,
           replacementItems,
           totalPriceDiff,
         }
@@ -793,6 +912,27 @@ export const useAppStore = create<AppState>()(
       refreshAllEstimates: (buildId) => {
         get().runCompatibilityCheck(buildId)
         get().runPerformanceEstimate(buildId)
+      },
+
+      recordStockTransaction: (params) => {
+        const tx: StockTransaction = {
+          ...params,
+          id: uuidv4(),
+          timestamp: Date.now(),
+        }
+        set((state) => ({
+          stockTransactions: [tx, ...state.stockTransactions].slice(0, 5000),
+        }))
+      },
+
+      getStockTransactions: (componentId) => {
+        return get().stockTransactions.filter((tx) => tx.componentId === componentId).slice(0, 100)
+      },
+
+      getBuildsUsingComponent: (componentId) => {
+        return get().builds.filter((b) =>
+          b.components.some((s) => s.componentId === componentId)
+        )
       },
     }),
     {

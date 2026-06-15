@@ -13,6 +13,7 @@ function QuotePage() {
 
   const [clientName, setClientName] = useState(currentBuild?.clientName ?? '')
   const [showPreview, setShowPreview] = useState(false)
+  const [internalView, setInternalView] = useState(false)
   
   const quoteSettings = currentBuild?.quoteSettings ?? {
     discountRate: 0,
@@ -131,6 +132,13 @@ function QuotePage() {
           </button>
           {quoteData && (
             <>
+              <button
+                className="btn btn-secondary"
+                onClick={() => setInternalView(!internalView)}
+                style={internalView ? { background: 'var(--success-color)', color: 'white' } : {}}
+              >
+                {internalView ? '🔒 店内视图' : '👁️ 切换店内视图'}
+              </button>
               <button className="btn btn-secondary" onClick={() => setShowPreview(!showPreview)}>
                 👁️ {showPreview ? '隐藏' : '显示'}预览
               </button>
@@ -302,9 +310,17 @@ function QuotePage() {
                 <span className="text-muted">日期：{quoteData.date}</span>
               </div>
 
-              {quoteData.riskSummary && (quoteData.riskSummary.lowStockItems.length > 0 || quoteData.riskSummary.replacementItems.length > 0) && (
+              {quoteData.riskSummary && (quoteData.riskSummary.lowStockItems.length > 0 || (quoteData.riskSummary.outOfStockItems?.length ?? 0) > 0 || quoteData.riskSummary.replacementItems.length > 0) && (
                 <div style={{ background: 'rgba(255, 193, 7, 0.1)', border: '1px solid rgba(255, 193, 7, 0.3)', borderRadius: 8, padding: 12, marginBottom: 16 }}>
                   <div style={{ fontWeight: 600, color: '#ffc107', marginBottom: 8 }}>⚠️ 风险提示</div>
+                  {quoteData.riskSummary.outOfStockItems && quoteData.riskSummary.outOfStockItems.length > 0 && (
+                    <div style={{ fontSize: 13, marginBottom: 6, color: 'var(--danger-color)' }}>
+                      <strong>缺货配件：</strong>
+                      {quoteData.riskSummary.outOfStockItems.map((item, i) => (
+                        <span key={i} style={{ marginRight: 12 }}>{item.name}</span>
+                      ))}
+                    </div>
+                  )}
                   {quoteData.riskSummary.lowStockItems.length > 0 && (
                     <div style={{ fontSize: 13, marginBottom: 6 }}>
                       <strong>库存不足：</strong>
@@ -336,6 +352,13 @@ function QuotePage() {
                     <th style={{ width: 60, textAlign: 'center' }}>数量</th>
                     <th style={{ width: 100, textAlign: 'right' }}>单价</th>
                     <th style={{ width: 120, textAlign: 'right' }}>小计</th>
+                    {internalView && (
+                      <>
+                        <th style={{ width: 90, textAlign: 'right' }}>进货成本</th>
+                        <th style={{ width: 80, textAlign: 'right' }}>毛利</th>
+                        <th style={{ width: 70, textAlign: 'center' }}>利润率</th>
+                      </>
+                    )}
                   </tr>
                 </thead>
                 <tbody>
@@ -356,12 +379,46 @@ function QuotePage() {
                       <td style={{ textAlign: 'right', fontWeight: 600 }}>
                         ¥{item.totalPrice.toLocaleString()}
                       </td>
+                      {internalView && (
+                        <>
+                          <td style={{ textAlign: 'right', color: 'var(--text-secondary)' }}>
+                            {item.totalCost ? `¥${item.totalCost.toLocaleString()}` : '-'}
+                          </td>
+                          <td style={{ textAlign: 'right', fontWeight: 600, color: (item.profit ?? 0) >= 0 ? 'var(--success-color)' : 'var(--danger-color)' }}>
+                            {item.profit !== undefined ? `¥${item.profit.toLocaleString()}` : '-'}
+                          </td>
+                          <td style={{ textAlign: 'center', color: (item.profitRate ?? 0) >= 30 ? 'var(--success-color)' : (item.profitRate ?? 0) >= 15 ? 'inherit' : 'var(--danger-color)' }}>
+                            {item.profitRate !== undefined ? `${item.profitRate}%` : '-'}
+                          </td>
+                        </>
+                      )}
                     </tr>
                   ))}
                 </tbody>
               </table>
 
               <div style={{ marginTop: 20, textAlign: 'right' }}>
+                {internalView && quoteData.totalCost > 0 && (
+                  <div style={{ marginBottom: 16, padding: 12, background: 'rgba(42, 157, 143, 0.1)', border: '1px solid rgba(42, 157, 143, 0.3)', borderRadius: 8, maxWidth: 400, marginLeft: 'auto' }}>
+                    <div style={{ fontWeight: 600, marginBottom: 8, color: 'var(--success-color)' }}>📊 利润分析（店内视图）</div>
+                    <div className="flex justify-between" style={{ padding: '3px 0', fontSize: 13 }}>
+                      <span>总进货成本：</span>
+                      <span>¥{quoteData.totalCost.toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between" style={{ padding: '3px 0', fontSize: 13 }}>
+                      <span>总毛利：</span>
+                      <span style={{ fontWeight: 600, color: quoteData.totalProfit >= 0 ? 'var(--success-color)' : 'var(--danger-color)' }}>
+                        ¥{quoteData.totalProfit.toLocaleString()}
+                      </span>
+                    </div>
+                    <div className="flex justify-between" style={{ padding: '3px 0', fontSize: 13 }}>
+                      <span>综合利润率：</span>
+                      <span style={{ fontWeight: 600, color: quoteData.overallProfitRate >= 30 ? 'var(--success-color)' : quoteData.overallProfitRate >= 15 ? 'inherit' : 'var(--danger-color)' }}>
+                        {quoteData.overallProfitRate}%
+                      </span>
+                    </div>
+                  </div>
+                )}
                 <div className="flex justify-between" style={{ padding: '6px 12px', maxWidth: 350, marginLeft: 'auto' }}>
                   <span className="text-secondary">商品小计：</span>
                   <span style={{ fontWeight: 600 }}>¥{quoteData.subtotal.toLocaleString()}</span>
