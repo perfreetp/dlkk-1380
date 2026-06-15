@@ -1,4 +1,4 @@
-import type { Build, Component, QuoteData, QuoteItem } from '@/types'
+import type { Build, Component, QuoteData, QuoteItem, ReplacementRecord } from '@/types'
 import { CATEGORY_LABELS } from '@/types'
 import { v4 as uuidv4 } from 'uuid'
 
@@ -16,6 +16,23 @@ export function generateQuote(
     unitPrice: c.price,
     totalPrice: c.price * (build.components.find((s) => s.componentId === c.id)?.quantity ?? 1),
     warranty: '1年质保',
+  }))
+
+  const replacementHistory: ReplacementRecord[] = (build.replacementHistory ?? []).map((entry) => ({
+    id: entry.id,
+    slotId: entry.slotId,
+    oldName: entry.oldComponentName,
+    oldBrand: entry.oldComponentBrand,
+    oldPrice: entry.oldPrice,
+    newName: entry.newComponentName,
+    newBrand: entry.newComponentBrand,
+    newPrice: entry.newPrice,
+    priceDiff: entry.priceDiff,
+    reason: entry.reason === 'out_of_stock' ? '缺货替换' 
+      : entry.reason === 'preference' ? '品牌偏好' 
+      : entry.reason === 'upgrade' ? '性能升级' 
+      : '其他',
+    timestamp: entry.timestamp,
   }))
 
   const subtotal = items.reduce((sum, i) => sum + i.totalPrice, 0)
@@ -36,6 +53,7 @@ export function generateQuote(
     date: dateStr,
     quoteNumber,
     items,
+    replacementHistory,
     subtotal,
     taxRate,
     taxAmount,
@@ -65,6 +83,51 @@ export function generateQuoteHtml(quote: QuoteData): string {
   `
     )
     .join('')
+
+  const replacementHtml = quote.replacementHistory && quote.replacementHistory.length > 0
+    ? `
+  <div style="margin-top: 30px;">
+    <h3 style="color: #1a1a2e; border-left: 4px solid #e63946; padding-left: 10px; margin-bottom: 15px;">配件变更记录</h3>
+    <table style="font-size: 12px;">
+      <thead>
+        <tr>
+          <th style="width: 60px; text-align: center;">序号</th>
+          <th style="width: 100px;">槽位</th>
+          <th>原配件</th>
+          <th>替换为</th>
+          <th style="width: 80px; text-align: right;">差价</th>
+          <th style="width: 100px; text-align: center;">原因</th>
+          <th style="width: 140px; text-align: center;">时间</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${quote.replacementHistory.map((r, idx) => {
+          const date = new Date(r.timestamp)
+          const timeStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+          const diffStr = r.priceDiff > 0 ? `+¥${r.priceDiff.toLocaleString()}` : r.priceDiff < 0 ? `-¥${Math.abs(r.priceDiff).toLocaleString()}` : '¥0'
+          const diffColor = r.priceDiff > 0 ? '#e63946' : r.priceDiff < 0 ? '#2a9d8f' : '#666'
+          return `
+            <tr>
+              <td style="padding: 6px; border-bottom: 1px solid #eee; text-align: center;">${idx + 1}</td>
+              <td style="padding: 6px; border-bottom: 1px solid #eee;">${r.slotId}</td>
+              <td style="padding: 6px; border-bottom: 1px solid #eee;">
+                <div style="font-weight: 500;">${r.oldName}</div>
+                <div style="font-size: 11px; color: #999;">${r.oldBrand} · ¥${r.oldPrice.toLocaleString()}</div>
+              </td>
+              <td style="padding: 6px; border-bottom: 1px solid #eee;">
+                <div style="font-weight: 500;">${r.newName}</div>
+                <div style="font-size: 11px; color: #999;">${r.newBrand} · ¥${r.newPrice.toLocaleString()}</div>
+              </td>
+              <td style="padding: 6px; border-bottom: 1px solid #eee; text-align: right; font-weight: 600; color: ${diffColor};">${diffStr}</td>
+              <td style="padding: 6px; border-bottom: 1px solid #eee; text-align: center;">${r.reason}</td>
+              <td style="padding: 6px; border-bottom: 1px solid #eee; text-align: center; font-size: 11px; color: #999;">${timeStr}</td>
+            </tr>
+          `
+        }).join('')}
+      </tbody>
+    </table>
+  </div>
+  ` : ''
 
   return `
 <!DOCTYPE html>
@@ -120,6 +183,8 @@ export function generateQuoteHtml(quote: QuoteData): string {
       ${itemsHtml}
     </tbody>
   </table>
+
+  ${replacementHtml}
 
   <div class="summary">
     <div class="summary-row">

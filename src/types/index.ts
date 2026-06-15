@@ -291,6 +291,22 @@ export interface BuildComponent {
   quantity: number
 }
 
+export interface ReplacementHistoryEntry {
+  id: string
+  slotId: string
+  oldComponentId: string
+  oldComponentName: string
+  oldComponentBrand: string
+  oldPrice: number
+  newComponentId: string
+  newComponentName: string
+  newComponentBrand: string
+  newPrice: number
+  priceDiff: number
+  reason: 'out_of_stock' | 'preference' | 'upgrade' | 'other'
+  timestamp: number
+}
+
 export interface Build {
   id: string
   name: string
@@ -299,6 +315,7 @@ export interface Build {
   components: BuildComponent[]
   budgetLimit?: number
   brandPreferences?: string[]
+  replacementHistory: ReplacementHistoryEntry[]
   createdAt: number
   updatedAt: number
   isFavorite: boolean
@@ -334,6 +351,20 @@ export interface QuoteItem {
   warranty?: string
 }
 
+export interface ReplacementRecord {
+  id: string
+  slotId: string
+  oldName: string
+  oldBrand: string
+  oldPrice: number
+  newName: string
+  newBrand: string
+  newPrice: number
+  priceDiff: number
+  reason: string
+  timestamp: number
+}
+
 export interface QuoteData {
   buildId: string
   buildName: string
@@ -341,6 +372,7 @@ export interface QuoteData {
   date: string
   quoteNumber: string
   items: QuoteItem[]
+  replacementHistory: ReplacementRecord[]
   subtotal: number
   taxRate: number
   taxAmount: number

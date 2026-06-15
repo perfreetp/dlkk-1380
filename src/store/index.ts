@@ -30,7 +30,7 @@ interface AppState {
   getAlternativeComponents: (componentId: string) => Component[]
   addAlternative: (componentId: string, alternativeId: string) => void
   removeAlternative: (componentId: string, alternativeId: string) => void
-  replaceComponentInBuild: (buildId: string, slotId: string, oldComponentId: string, newComponentId: string) => void
+  replaceComponentInBuild: (buildId: string, slotId: string, oldComponentId: string, newComponentId: string, reason?: 'out_of_stock' | 'preference' | 'upgrade' | 'other') => void
 
   createBuild: (name: string, description?: string) => string
   updateBuild: (id: string, updates: Partial<Build>) => void
@@ -108,21 +108,76 @@ export const useAppStore = create<AppState>()(
 
       addComponent: (component) => {
         const now = Date.now()
+        const newId = uuidv4()
         const newComponent = {
           ...component,
-          id: uuidv4(),
+          id: newId,
           createdAt: now,
           updatedAt: now,
         } as Component
         set((state) => ({ components: [...state.components, newComponent] }))
+        
+        if (component.alternativeIds && component.alternativeIds.length > 0) {
+          component.alternativeIds.forEach((altId) => {
+            const altComponent = get().getComponentById(altId)
+            if (altComponent) {
+              const altAlts = altComponent.alternativeIds ?? []
+              if (!altAlts.includes(newId)) {
+                get().updateComponent(altId, {
+                  alternativeIds: [...altAlts, newId],
+                })
+              }
+            }
+          })
+        }
       },
 
       updateComponent: (id, updates) => {
+        const oldComponent = get().getComponentById(id)
+        const oldAltIds = oldComponent?.alternativeIds ?? []
+        const newAltIds = updates.alternativeIds ?? oldAltIds
+        
         set((state) => ({
           components: state.components.map((c) =>
             c.id === id ? ({ ...c, ...updates, updatedAt: Date.now() } as Component) : c
           ),
         }))
+        
+        if (updates.alternativeIds !== undefined) {
+          const addedAlts = newAltIds.filter((altId) => !oldAltIds.includes(altId))
+          const removedAlts = oldAltIds.filter((altId) => !newAltIds.includes(altId))
+          
+          addedAlts.forEach((altId) => {
+            const altComponent = get().getComponentById(altId)
+            if (altComponent) {
+              const altAlts = altComponent.alternativeIds ?? []
+              if (!altAlts.includes(id)) {
+                set((state) => ({
+                  components: state.components.map((c) =>
+                    c.id === altId
+                      ? ({ ...c, alternativeIds: [...altAlts, id], updatedAt: Date.now() } as Component)
+                      : c
+                  ),
+                }))
+              }
+            }
+          })
+          
+          removedAlts.forEach((altId) => {
+            const altComponent = get().getComponentById(altId)
+            if (altComponent) {
+              const altAlts = altComponent.alternativeIds ?? []
+              set((state) => ({
+                components: state.components.map((c) =>
+                  c.id === altId
+                    ? ({ ...c, alternativeIds: altAlts.filter((aid) => aid !== id), updatedAt: Date.now() } as Component)
+                    : c
+                ),
+              }))
+            }
+          })
+        }
+        
         const state = get()
         state.builds.forEach((b) => {
           const hasComponent = b.components.some((s) => s.componentId === id)
@@ -203,9 +258,50 @@ export const useAppStore = create<AppState>()(
         }
       },
 
-      replaceComponentInBuild: (buildId, slotId, oldComponentId, newComponentId) => {
-        get().addComponentToBuild(buildId, slotId, newComponentId)
-        set({ lastReplacedComponent: { fromId: oldComponentId, toId: newComponentId, buildId } })
+      replaceComponentInBuild: (buildId, slotId, oldComponentId, newComponentId, reason = 'other') => {
+        const state = get()
+        const oldComponent = state.getComponentById(oldComponentId)
+        const newComponent = state.getComponentById(newComponentId)
+        if (!oldComponent || !newComponent) return
+        
+        const historyEntry: Build['replacementHistory'][0] = {
+          id: uuidv4(),
+          slotId,
+          oldComponentId,
+          oldComponentName: oldComponent.name,
+          oldComponentBrand: oldComponent.brand,
+          oldPrice: oldComponent.price,
+          newComponentId,
+          newComponentName: newComponent.name,
+          newComponentBrand: newComponent.brand,
+          newPrice: newComponent.price,
+          priceDiff: newComponent.price - oldComponent.price,
+          reason,
+          timestamp: Date.now(),
+        }
+        
+        set((s) => ({
+          builds: s.builds.map((b) =>
+            b.id === buildId
+              ? {
+                  ...b,
+                  components: b.components.map((slot) =>
+                    slot.slotId === slotId
+                      ? { ...slot, componentId: newComponentId }
+                      : slot
+                  ),
+                  replacementHistory: [...b.replacementHistory, historyEntry],
+                  updatedAt: Date.now(),
+                }
+              : b
+          ),
+          lastReplacedComponent: { fromId: oldComponentId, toId: newComponentId, buildId },
+        }))
+        
+        if (buildId === get().currentBuildId) {
+          get().runCompatibilityCheck(buildId)
+          get().runPerformanceEstimate(buildId)
+        }
       },
 
       createBuild: (name, description) => {
@@ -221,6 +317,7 @@ export const useAppStore = create<AppState>()(
           isFavorite: false,
           tags: [],
           brandPreferences: [],
+          replacementHistory: [],
         }
         set((state) => ({
           builds: [...state.builds, newBuild],
@@ -357,6 +454,7 @@ export const useAppStore = create<AppState>()(
           isFavorite: false,
           components: source.components.map((c) => ({ ...c })),
           brandPreferences: source.brandPreferences ? [...source.brandPreferences] : [],
+          replacementHistory: [],
         }
         set((state) => ({ builds: [...state.builds, duplicated] }))
         return newId

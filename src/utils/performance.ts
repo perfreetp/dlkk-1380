@@ -28,24 +28,27 @@ export function estimatePerformance(components: Component[]): PerformanceEstimat
   const cpuProductivityScore = cpu?.productivityScore ?? 0
   const gpuProductivityScore = gpu?.productivityScore ?? 0
 
-  const totalRam = rams.reduce((sum, r) => sum + r.capacity, 0)
-  const ramSpeed = rams.length > 0 ? Math.max(...rams.map((r) => r.speed)) : 0
+  const totalRam = rams.reduce((sum, r) => sum + (r.capacity ?? 0), 0)
+  const ramSpeed = rams.length > 0 ? Math.max(...rams.map((r) => r.speed ?? 0)) : 0
 
   const ramFactor = Math.min(1, totalRam / 32) * (ramSpeed >= 6000 ? 1 : ramSpeed >= 5200 ? 0.95 : 0.9)
 
-  const overallScore = Math.round(
+  const overallScore = isNaN(cpuScore) || isNaN(gpuScore) ? 0 : Math.round(
     (cpuScore * 0.4 + gpuScore * 0.5 + ramFactor * 10)
   )
 
-  const productivityScore = Math.round(
+  const productivityScore = isNaN(cpuProductivityScore) || isNaN(gpuProductivityScore) ? 0 : Math.round(
     (cpuProductivityScore * 0.6 + gpuProductivityScore * 0.25 + ramFactor * 15)
   )
 
   const gamingFps: Record<string, number> = {}
   Object.entries(GAME_BASELINE_FPS).forEach(([game, baseline]) => {
-    const gpuRatio = (gpuScore / 100) * 0.85 + (cpuGamingScore / 100) * 0.1
-    const resolutionMultiplier = gpuScore >= 90 ? baseline['4k'] : gpuScore >= 75 ? baseline['1440p'] : baseline['1080p']
-    gamingFps[game] = Math.round(resolutionMultiplier * gpuRatio * ramFactor)
+    const safeGpuScore = isNaN(gpuScore) || gpuScore <= 0 ? 50 : gpuScore
+    const safeCpuGamingScore = isNaN(cpuGamingScore) || cpuGamingScore <= 0 ? 50 : cpuGamingScore
+    const gpuRatio = (safeGpuScore / 100) * 0.85 + (safeCpuGamingScore / 100) * 0.1
+    const resolutionMultiplier = safeGpuScore >= 90 ? baseline['4k'] : safeGpuScore >= 75 ? baseline['1440p'] : baseline['1080p']
+    const fps = Math.round(resolutionMultiplier * gpuRatio * ramFactor)
+    gamingFps[game] = isNaN(fps) || fps <= 0 ? 30 : fps
   })
 
   let cpuUtilization = 50
@@ -53,18 +56,18 @@ export function estimatePerformance(components: Component[]): PerformanceEstimat
   let bottleneckComponent: 'CPU' | 'GPU' | 'Balanced' = 'Balanced'
   let bottleneckPercentage = 0
 
-  if (cpuScore && gpuScore) {
+  if (cpuScore && gpuScore && cpuGamingScore && gpuScore) {
     const diff = Math.abs(cpuGamingScore - gpuScore)
     if (cpuGamingScore < gpuScore - 10) {
       bottleneckComponent = 'CPU'
-      bottleneckPercentage = Math.round((1 - cpuGamingScore / gpuScore) * 100)
+      bottleneckPercentage = gpuScore > 0 ? Math.round((1 - cpuGamingScore / gpuScore) * 100) : 20
       cpuUtilization = 95
-      gpuUtilization = Math.round(80 - bottleneckPercentage)
+      gpuUtilization = Math.round(Math.max(20, 80 - bottleneckPercentage))
     } else if (gpuScore < cpuGamingScore - 10) {
       bottleneckComponent = 'GPU'
-      bottleneckPercentage = Math.round((1 - gpuScore / cpuGamingScore) * 100)
+      bottleneckPercentage = cpuGamingScore > 0 ? Math.round((1 - gpuScore / cpuGamingScore) * 100) : 20
       gpuUtilization = 95
-      cpuUtilization = Math.round(80 - bottleneckPercentage)
+      cpuUtilization = Math.round(Math.max(20, 80 - bottleneckPercentage))
     } else {
       cpuUtilization = 85
       gpuUtilization = 85
@@ -87,10 +90,12 @@ export function estimatePerformance(components: Component[]): PerformanceEstimat
   components.forEach((c) => {
     if (c.category === 'cpu') {
       idlePower += 15
-      loadPower += (c as CPUComponent).tdp
+      const tdp = (c as CPUComponent).tdp
+      loadPower += tdp && tdp > 0 ? tdp : 65
     } else if (c.category === 'gpu') {
       idlePower += 20
-      loadPower += (c as GPUComponent).tdp
+      const tdp = (c as GPUComponent).tdp
+      loadPower += tdp && tdp > 0 ? tdp : 150
     } else if (c.category === 'ram') {
       idlePower += 3
       loadPower += 8
@@ -108,23 +113,23 @@ export function estimatePerformance(components: Component[]): PerformanceEstimat
 
   const psu = components.find((c) => c.category === 'psu')
   const psuWattage = (psu as any)?.wattage ?? 0
-  const psuHeadroom = psuWattage ? Math.round((1 - loadPower / psuWattage) * 100) : 0
-  const recommendedPsu = Math.ceil(loadPower * 1.4 / 50) * 50
+  const psuHeadroom = psuWattage && psuWattage > 0 && loadPower > 0 ? Math.round((1 - loadPower / psuWattage) * 100) : 0
+  const recommendedPsu = Math.max(500, Math.ceil(loadPower * 1.4 / 50) * 50)
 
   return {
     gamingFps,
-    productivityScore,
-    overallScore,
+    productivityScore: isNaN(productivityScore) ? 0 : productivityScore,
+    overallScore: isNaN(overallScore) ? 0 : overallScore,
     bottleneckInfo: {
-      cpuUtilization,
-      gpuUtilization,
+      cpuUtilization: isNaN(cpuUtilization) ? 50 : Math.max(0, Math.min(100, cpuUtilization)),
+      gpuUtilization: isNaN(gpuUtilization) ? 50 : Math.max(0, Math.min(100, gpuUtilization)),
       bottleneckComponent,
-      bottleneckPercentage,
+      bottleneckPercentage: isNaN(bottleneckPercentage) ? 0 : Math.max(0, bottleneckPercentage),
     },
     powerConsumption: {
       idle: idlePower,
       load: loadPower,
-      psuHeadroom,
+      psuHeadroom: isNaN(psuHeadroom) ? 0 : psuHeadroom,
       recommendedPsu,
     },
   }

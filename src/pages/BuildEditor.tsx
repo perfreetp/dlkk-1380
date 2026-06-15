@@ -145,7 +145,7 @@ function DraggableSlot({
                         key={alt.id}
                         className="alternative-item"
                         onClick={() => {
-                          store.replaceComponentInBuild(buildId, slotId, component.id, alt.id)
+                          store.replaceComponentInBuild(buildId, slotId, component.id, alt.id, 'out_of_stock')
                           setShowAlternatives(false)
                         }}
                       >
@@ -843,6 +843,7 @@ function BuildEditor() {
           excludeIds={selectedIds}
           onSelect={handlePick}
           onClose={() => setPickerSlot(null)}
+          buildId={currentBuild.id}
         />
       )}
     </DndContext>

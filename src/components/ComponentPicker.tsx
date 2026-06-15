@@ -8,13 +8,18 @@ interface Props {
   excludeIds: Set<string>
   onSelect: (component: Component) => void
   onClose: () => void
+  buildId?: string
 }
 
-function ComponentPicker({ category, excludeIds, onSelect, onClose }: Props) {
+function ComponentPicker({ category, excludeIds, onSelect, onClose, buildId }: Props) {
   const components = useAppStore((s) => s.components)
+  const getSortedByBrandPreference = useAppStore((s) => s.getSortedByBrandPreference)
+  const getBrandPreferences = useAppStore((s) => s.getBrandPreferences)
   const [search, setSearch] = useState('')
   const [onlyInStock, setOnlyInStock] = useState(false)
   const [brandsFilter, setBrandsFilter] = useState('')
+
+  const brandPreferences = buildId ? getBrandPreferences(buildId) : []
 
   const list = useMemo(() => {
     let arr = components.filter(
@@ -35,8 +40,15 @@ function ComponentPicker({ category, excludeIds, onSelect, onClose }: Props) {
     if (brandsFilter) {
       arr = arr.filter((c) => c.brand === brandsFilter)
     }
-    return arr.sort((a, b) => b.price - a.price)
-  }, [components, category, excludeIds, search, onlyInStock, brandsFilter])
+    
+    if (buildId && brandPreferences.length > 0) {
+      arr = getSortedByBrandPreference(arr, buildId)
+    } else {
+      arr = arr.sort((a, b) => b.price - a.price)
+    }
+    
+    return arr
+  }, [components, category, excludeIds, search, onlyInStock, brandsFilter, buildId, brandPreferences.length, getSortedByBrandPreference])
 
   const availableBrands = useMemo(() => {
     return Array.from(new Set(components.filter((c) => c.category === category).map((c) => c.brand))).sort()
@@ -50,7 +62,14 @@ function ComponentPicker({ category, excludeIds, onSelect, onClose }: Props) {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="modal-header">
-          <div className="modal-title">选择 {CATEGORY_LABELS[category]}</div>
+          <div className="modal-title">
+            选择 {CATEGORY_LABELS[category]}
+            {brandPreferences.length > 0 && (
+              <span className="badge badge-info" style={{ marginLeft: 8, fontSize: 11 }}>
+                偏好：{brandPreferences.join(' / ')}
+              </span>
+            )}
+          </div>
           <button type="button" className="close-btn" onClick={onClose}>
             ✕
           </button>
@@ -102,7 +121,19 @@ function ComponentPicker({ category, excludeIds, onSelect, onClose }: Props) {
                   >
                     <div className="component-card-header">
                       <div>
-                        <div className="component-name">{c.name}</div>
+                        <div className="component-name" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          {c.name}
+                          {brandPreferences.length > 0 && !brandPreferences.includes(c.brand) && (
+                            <span className="badge badge-warning" style={{ fontSize: 10, padding: '1px 4px' }}>
+                              非偏好
+                            </span>
+                          )}
+                          {brandPreferences.length > 0 && brandPreferences.includes(c.brand) && (
+                            <span className="badge badge-success" style={{ fontSize: 10, padding: '1px 4px' }}>
+                              推荐
+                            </span>
+                          )}
+                        </div>
                         <div className="component-brand">
                           {c.brand} · {c.model}
                         </div>

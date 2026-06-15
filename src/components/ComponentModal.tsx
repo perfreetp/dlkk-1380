@@ -63,6 +63,67 @@ const COOLER_TYPES: CoolerType[] = [
   'Custom Loop',
 ]
 
+const REQUIRED_SPECS: Record<ComponentCategory, { field: string; label: string }[]> = {
+  cpu: [
+    { field: 'socket', label: 'CPU 接口' },
+    { field: 'tdp', label: 'TDP 功耗' },
+    { field: 'cores', label: '核心数' },
+    { field: 'threads', label: '线程数' },
+    { field: 'baseClock', label: '基础频率' },
+    { field: 'boostClock', label: '睿频频率' },
+  ],
+  motherboard: [
+    { field: 'socket', label: 'CPU 接口' },
+    { field: 'formFactor', label: '板型尺寸' },
+    { field: 'memoryType', label: '内存类型' },
+    { field: 'maxMemory', label: '最大内存' },
+    { field: 'memorySlots', label: '内存插槽数' },
+  ],
+  gpu: [
+    { field: 'tdp', label: 'TDP 功耗' },
+    { field: 'length', label: '显卡长度' },
+    { field: 'pcieSlot', label: 'PCIe 插槽' },
+    { field: 'memorySize', label: '显存容量' },
+    { field: 'memoryType', label: '显存类型' },
+  ],
+  ram: [
+    { field: 'memoryType', label: '内存类型' },
+    { field: 'capacity', label: '单条容量' },
+    { field: 'speed', label: '内存频率' },
+    { field: 'modules', label: '条数' },
+  ],
+  storage: [
+    { field: 'interface', label: '接口类型' },
+    { field: 'capacity', label: '容量' },
+    { field: 'type', label: '存储类型' },
+    { field: 'formFactor', label: '尺寸规格' },
+  ],
+  psu: [
+    { field: 'wattage', label: '额定功率' },
+    { field: 'formFactor', label: '电源规格' },
+    { field: 'efficiency', label: '认证等级' },
+  ],
+  case: [
+    { field: 'formFactor', label: '支持板型' },
+    { field: 'maxGpuLength', label: '显卡限长' },
+    { field: 'maxCoolerHeight', label: '散热器限高' },
+  ],
+  cooler: [
+    { field: 'type', label: '散热类型' },
+    { field: 'tdpRating', label: '散热能力' },
+    { field: 'heightOrRadiatorSize', label: '高度/冷排尺寸' },
+    { field: 'supportedSockets', label: '支持接口' },
+  ],
+  os: [
+    { field: 'edition', label: '版本' },
+  ],
+  monitor: [
+    { field: 'size', label: '屏幕尺寸' },
+    { field: 'resolution', label: '分辨率' },
+    { field: 'panelType', label: '面板类型' },
+  ],
+}
+
 function ComponentModal({ component, onSave, onClose }: Props) {
   const components = useAppStore((state) => state.components)
   const getAlternativeComponents = useAppStore((state) => state.getAlternativeComponents)
@@ -105,6 +166,35 @@ function ComponentModal({ component, onSave, onClose }: Props) {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+    
+    if (!formData.name || !formData.name.trim()) {
+      alert('请填写配件名称')
+      return
+    }
+    if (!formData.price || formData.price <= 0) {
+      alert('请填写有效的配件价格')
+      return
+    }
+    
+    const missingSpecs = REQUIRED_SPECS[category].filter((spec) => {
+      const value = formData[spec.field]
+      return value === undefined || value === null || value === '' || (typeof value === 'number' && isNaN(value))
+    })
+    
+    if (missingSpecs.length > 0) {
+      const specNames = missingSpecs.map((s) => s.label).join('、')
+      const confirm = window.confirm(
+        `以下关键规格未填写：\n${specNames}\n\n` +
+        `缺少这些规格可能导致性能估算不准确和兼容性检查失效。\n\n` +
+        `点击【确定】继续保存（不推荐）\n` +
+        `点击【取消】去补充规格（推荐）`
+      )
+      if (!confirm) {
+        setActiveTab('specs')
+        return
+      }
+    }
+    
     onSave({
       ...formData,
       category,

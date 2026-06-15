@@ -76,7 +76,11 @@ export default function BudgetPage() {
   }
 
   const handleReplaceComponent = (slotId: string, oldId: string, newId: string) => {
-    replaceComponentInBuild(currentBuild.id, slotId, oldId, newId)
+    const oldComponent = useAppStore.getState().getComponentById(oldId)
+    const newComponent = useAppStore.getState().getComponentById(newId)
+    const isBrandIssue = oldComponent && newComponent && useAppStore.getState().getBrandPreferences(currentBuild.id).includes(newComponent.brand) && !useAppStore.getState().getBrandPreferences(currentBuild.id).includes(oldComponent.brand)
+    const reason = isBrandIssue ? 'preference' : 'out_of_stock'
+    replaceComponentInBuild(currentBuild.id, slotId, oldId, newId, reason)
   }
 
   return (
