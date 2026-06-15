@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { Component, Build, CompatibilityIssue, PerformanceEstimate, QuoteData } from '@/types'
-import { ComponentCategory, CATEGORY_ORDER } from '@/types'
+import type { Component, Build, CompatibilityIssue, PerformanceEstimate, QuoteData, ComponentCategory } from '@/types'
+import { CATEGORY_ORDER, CATEGORY_LABELS } from '@/types'
 import { sampleComponents } from '@/data/sampleComponents'
 import { checkCompatibility } from '@/utils/compatibility'
 import { estimatePerformance } from '@/utils/performance'
@@ -17,14 +17,20 @@ interface AppState {
   filterCategory: ComponentCategory | 'all'
   filterBrand: string
   filterInStockOnly: boolean
+  sortByBrandPreference: boolean
   compatibilityIssues: CompatibilityIssue[]
   performanceEstimate: PerformanceEstimate | null
   quoteData: QuoteData | null
+  lastReplacedComponent: { fromId: string; toId: string; buildId: string } | null
 
   addComponent: (component: Omit<Component, 'id' | 'createdAt' | 'updatedAt'>) => void
   updateComponent: (id: string, updates: Partial<Component>) => void
   deleteComponent: (id: string) => void
   getComponentById: (id: string | null | undefined) => Component | undefined
+  getAlternativeComponents: (componentId: string) => Component[]
+  addAlternative: (componentId: string, alternativeId: string) => void
+  removeAlternative: (componentId: string, alternativeId: string) => void
+  replaceComponentInBuild: (buildId: string, slotId: string, oldComponentId: string, newComponentId: string) => void
 
   createBuild: (name: string, description?: string) => string
   updateBuild: (id: string, updates: Partial<Build>) => void
@@ -32,8 +38,18 @@ interface AppState {
   setCurrentBuild: (id: string | null) => void
   addComponentToBuild: (buildId: string, slotId: string, componentId: string, quantity?: number) => void
   removeComponentFromBuild: (buildId: string, slotId: string) => void
+  swapSlotsInBuild: (buildId: string, slotId1: string, slotId2: string) => void
   toggleBuildFavorite: (id: string) => void
   duplicateBuild: (id: string) => string
+  setBrandPreferences: (buildId: string, brands: string[]) => void
+  addBrandPreference: (buildId: string, brand: string) => void
+  removeBrandPreference: (buildId: string, brand: string) => void
+  getBrandPreferences: (buildId: string) => string[]
+  isBrandPreferred: (buildId: string, brand: string) => boolean
+  getNonPreferredComponentsInBuild: (buildId: string) => { slot: Build['components'][0]; component: Component }[]
+  getSortedByBrandPreference: (components: Component[], buildId: string) => Component[]
+  getBudgetOverrun: (buildId: string) => number
+  getBudgetStatus: (buildId: string) => { status: 'ok' | 'warning' | 'over'; overrun: number; percentage: number }
 
   toggleCompareBuild: (id: string) => void
   clearCompare: () => void
@@ -42,6 +58,7 @@ interface AppState {
   setFilterCategory: (category: ComponentCategory | 'all') => void
   setFilterBrand: (brand: string) => void
   setFilterInStockOnly: (only: boolean) => void
+  setSortByBrandPreference: (enabled: boolean) => void
 
   runCompatibilityCheck: (buildId: string) => void
   runPerformanceEstimate: (buildId: string) => void
@@ -52,6 +69,8 @@ interface AppState {
   getBuildPowerConsumption: (buildId: string) => number
   getBrands: () => string[]
   getCurrentBuild: () => Build | null
+  getBuildsByCategory: (category: ComponentCategory | 'all') => Build[]
+  refreshAllEstimates: (buildId: string) => void
 }
 
 function createEmptyBuildComponents(): Build['components'] {
@@ -81,9 +100,11 @@ export const useAppStore = create<AppState>()(
       filterCategory: 'all',
       filterBrand: '',
       filterInStockOnly: false,
+      sortByBrandPreference: true,
       compatibilityIssues: [],
       performanceEstimate: null,
       quoteData: null,
+      lastReplacedComponent: null,
 
       addComponent: (component) => {
         const now = Date.now()
@@ -102,17 +123,89 @@ export const useAppStore = create<AppState>()(
             c.id === id ? ({ ...c, ...updates, updatedAt: Date.now() } as Component) : c
           ),
         }))
+        const state = get()
+        state.builds.forEach((b) => {
+          const hasComponent = b.components.some((s) => s.componentId === id)
+          if (hasComponent) {
+            state.runCompatibilityCheck(b.id)
+            state.runPerformanceEstimate(b.id)
+          }
+        })
       },
 
       deleteComponent: (id) => {
-        set((state) => ({
-          components: state.components.filter((c) => c.id !== id),
-        }))
+        set((state) => {
+          const newBuilds = state.builds.map((b) => ({
+            ...b,
+            components: b.components.map((s) =>
+              s.componentId === id ? { ...s, componentId: null } : s
+            ),
+            updatedAt: Date.now(),
+          }))
+          const newComponents = state.components
+            .filter((c) => c.id !== id)
+            .map((c) => ({
+              ...c,
+              alternativeIds: c.alternativeIds?.filter((altId) => altId !== id) ?? [],
+            }))
+          return {
+            components: newComponents,
+            builds: newBuilds,
+          }
+        })
       },
 
       getComponentById: (id) => {
         if (!id) return undefined
         return get().components.find((c) => c.id === id)
+      },
+
+      getAlternativeComponents: (componentId) => {
+        const component = get().getComponentById(componentId)
+        if (!component || !component.alternativeIds) return []
+        return component.alternativeIds
+          .map((id) => get().getComponentById(id))
+          .filter((c): c is Component => !!c)
+      },
+
+      addAlternative: (componentId, alternativeId) => {
+        const component = get().getComponentById(componentId)
+        const alternative = get().getComponentById(alternativeId)
+        if (!component || !alternative) return
+        if (component.category !== alternative.category) {
+          console.warn('替代件必须是同一类别')
+          return
+        }
+        const currentAlts = component.alternativeIds ?? []
+        if (currentAlts.includes(alternativeId)) return
+        get().updateComponent(componentId, {
+          alternativeIds: [...currentAlts, alternativeId],
+        })
+        const altAlts = alternative.alternativeIds ?? []
+        if (!altAlts.includes(componentId)) {
+          get().updateComponent(alternativeId, {
+            alternativeIds: [...altAlts, componentId],
+          })
+        }
+      },
+
+      removeAlternative: (componentId, alternativeId) => {
+        const component = get().getComponentById(componentId)
+        const alternative = get().getComponentById(alternativeId)
+        if (!component) return
+        get().updateComponent(componentId, {
+          alternativeIds: (component.alternativeIds ?? []).filter((id) => id !== alternativeId),
+        })
+        if (alternative) {
+          get().updateComponent(alternativeId, {
+            alternativeIds: (alternative.alternativeIds ?? []).filter((id) => id !== componentId),
+          })
+        }
+      },
+
+      replaceComponentInBuild: (buildId, slotId, oldComponentId, newComponentId) => {
+        get().addComponentToBuild(buildId, slotId, newComponentId)
+        set({ lastReplacedComponent: { fromId: oldComponentId, toId: newComponentId, buildId } })
       },
 
       createBuild: (name, description) => {
@@ -127,6 +220,7 @@ export const useAppStore = create<AppState>()(
           updatedAt: now,
           isFavorite: false,
           tags: [],
+          brandPreferences: [],
         }
         set((state) => ({
           builds: [...state.builds, newBuild],
@@ -141,6 +235,11 @@ export const useAppStore = create<AppState>()(
             b.id === id ? { ...b, ...updates, updatedAt: Date.now() } : b
           ),
         }))
+        if (updates.budgetLimit !== undefined || updates.brandPreferences !== undefined) {
+          const state = get()
+          state.runCompatibilityCheck(id)
+          state.runPerformanceEstimate(id)
+        }
       },
 
       deleteBuild: (id) => {
@@ -204,6 +303,38 @@ export const useAppStore = create<AppState>()(
         }
       },
 
+      swapSlotsInBuild: (buildId, slotId1, slotId2) => {
+        set((state) => ({
+          builds: state.builds.map((b) => {
+            if (b.id !== buildId) return b
+            const slot1 = b.components.find((s) => s.slotId === slotId1)
+            const slot2 = b.components.find((s) => s.slotId === slotId2)
+            if (!slot1 || !slot2) return b
+            if (slot1.category !== slot2.category) {
+              console.warn('只能交换同类别的槽位')
+              return b
+            }
+            return {
+              ...b,
+              components: b.components.map((slot) => {
+                if (slot.slotId === slotId1) {
+                  return { ...slot, componentId: slot2.componentId, quantity: slot2.quantity }
+                }
+                if (slot.slotId === slotId2) {
+                  return { ...slot, componentId: slot1.componentId, quantity: slot1.quantity }
+                }
+                return slot
+              }),
+              updatedAt: Date.now(),
+            }
+          }),
+        }))
+        if (buildId === get().currentBuildId) {
+          get().runCompatibilityCheck(buildId)
+          get().runPerformanceEstimate(buildId)
+        }
+      },
+
       toggleBuildFavorite: (id) => {
         set((state) => ({
           builds: state.builds.map((b) =>
@@ -225,9 +356,83 @@ export const useAppStore = create<AppState>()(
           updatedAt: now,
           isFavorite: false,
           components: source.components.map((c) => ({ ...c })),
+          brandPreferences: source.brandPreferences ? [...source.brandPreferences] : [],
         }
         set((state) => ({ builds: [...state.builds, duplicated] }))
         return newId
+      },
+
+      setBrandPreferences: (buildId, brands) => {
+        get().updateBuild(buildId, { brandPreferences: brands })
+      },
+
+      addBrandPreference: (buildId, brand) => {
+        const build = get().builds.find((b) => b.id === buildId)
+        if (!build) return
+        const prefs = build.brandPreferences ?? []
+        if (!prefs.includes(brand)) {
+          get().updateBuild(buildId, { brandPreferences: [...prefs, brand] })
+        }
+      },
+
+      removeBrandPreference: (buildId, brand) => {
+        const build = get().builds.find((b) => b.id === buildId)
+        if (!build) return
+        get().updateBuild(buildId, {
+          brandPreferences: (build.brandPreferences ?? []).filter((b) => b !== brand),
+        })
+      },
+
+      getBrandPreferences: (buildId) => {
+        const build = get().builds.find((b) => b.id === buildId)
+        return build?.brandPreferences ?? []
+      },
+
+      isBrandPreferred: (buildId, brand) => {
+        const prefs = get().getBrandPreferences(buildId)
+        return prefs.length === 0 || prefs.includes(brand)
+      },
+
+      getNonPreferredComponentsInBuild: (buildId) => {
+        const prefs = get().getBrandPreferences(buildId)
+        if (prefs.length === 0) return []
+        const buildComponents = get().getBuildComponents(buildId)
+        return buildComponents.filter(
+          (item): item is { slot: Build['components'][0]; component: Component } =>
+            item.component !== null && !prefs.includes(item.component.brand)
+        )
+      },
+
+      getSortedByBrandPreference: (components, buildId) => {
+        const prefs = get().getBrandPreferences(buildId)
+        if (prefs.length === 0 || !get().sortByBrandPreference) return [...components]
+        return [...components].sort((a, b) => {
+          const aPref = prefs.includes(a.brand) ? 0 : 1
+          const bPref = prefs.includes(b.brand) ? 0 : 1
+          if (aPref !== bPref) return aPref - bPref
+          return b.price - a.price
+        })
+      },
+
+      getBudgetOverrun: (buildId) => {
+        const build = get().builds.find((b) => b.id === buildId)
+        if (!build || !build.budgetLimit) return 0
+        const total = get().getBuildTotalPrice(buildId)
+        return Math.max(0, total - build.budgetLimit)
+      },
+
+      getBudgetStatus: (buildId) => {
+        const build = get().builds.find((b) => b.id === buildId)
+        if (!build || !build.budgetLimit) return { status: 'ok', overrun: 0, percentage: 0 }
+        const total = get().getBuildTotalPrice(buildId)
+        const percentage = (total / build.budgetLimit) * 100
+        if (total <= build.budgetLimit) {
+          return { status: 'ok', overrun: 0, percentage }
+        } else if (total <= build.budgetLimit * 1.05) {
+          return { status: 'warning', overrun: total - build.budgetLimit, percentage }
+        } else {
+          return { status: 'over', overrun: total - build.budgetLimit, percentage }
+        }
       },
 
       toggleCompareBuild: (id) => {
@@ -251,6 +456,7 @@ export const useAppStore = create<AppState>()(
       setFilterCategory: (category) => set({ filterCategory: category }),
       setFilterBrand: (brand) => set({ filterBrand: brand }),
       setFilterInStockOnly: (only) => set({ filterInStockOnly: only }),
+      setSortByBrandPreference: (enabled) => set({ sortByBrandPreference: enabled }),
 
       runCompatibilityCheck: (buildId) => {
         const build = get().builds.find((b) => b.id === buildId)
@@ -265,6 +471,40 @@ export const useAppStore = create<AppState>()(
           }))
           .filter((x) => x.component !== null) as { slot: Build['components'][0]; component: Component }[]
         const issues = checkCompatibility(buildComponents.map((x) => x.component))
+
+        const prefs = build.brandPreferences ?? []
+        if (prefs.length > 0) {
+          buildComponents.forEach(({ slot, component }) => {
+            if (!prefs.includes(component.brand)) {
+              issues.push({
+                severity: 'info',
+                category: component.category,
+                componentId: component.id,
+                componentName: component.name,
+                message: `${component.name} 的品牌 ${component.brand} 不在偏好品牌列表中`,
+                suggestion: `偏好品牌: ${prefs.join(', ')}，可考虑更换为偏好品牌产品`,
+              })
+            }
+          })
+        }
+
+        const budgetStatus = get().getBudgetStatus(buildId)
+        if (budgetStatus.status === 'over') {
+          issues.push({
+            severity: 'error',
+            category: 'general',
+            message: `预算超支 ¥${budgetStatus.overrun.toLocaleString()}，已超出预算 ${(budgetStatus.percentage - 100).toFixed(1)}%`,
+            suggestion: '建议更换更低价格的配件或调整预算上限',
+          })
+        } else if (budgetStatus.status === 'warning') {
+          issues.push({
+            severity: 'warning',
+            category: 'general',
+            message: `预算即将超支，已使用预算的 ${budgetStatus.percentage.toFixed(1)}%`,
+            suggestion: '注意控制配件价格，避免超出预算',
+          })
+        }
+
         set({ compatibilityIssues: issues })
       },
 
@@ -297,6 +537,16 @@ export const useAppStore = create<AppState>()(
           }))
           .filter((x) => x.component !== null) as { slot: Build['components'][0]; component: Component }[]
         const quote = generateQuote(build, buildComponents.map((x) => x.component), clientName)
+
+        const lastReplacement = get().lastReplacedComponent
+        if (lastReplacement && lastReplacement.buildId === buildId) {
+          const fromComp = get().getComponentById(lastReplacement.fromId)
+          const toComp = get().getComponentById(lastReplacement.toId)
+          if (fromComp && toComp) {
+            quote.notes += `\\n\\n📝 配件变更记录：由「${fromComp.name}」替换为「${toComp.name}」，差价 ¥${(toComp.price - fromComp.price).toLocaleString()}`
+          }
+        }
+
         set({ quoteData: quote })
       },
 
@@ -325,15 +575,21 @@ export const useAppStore = create<AppState>()(
         items.forEach((item) => {
           if (!item.component) return
           if (item.component.category === 'cpu') {
-            total += (item.component as any).tdp || 65
+            const tdp = (item.component as any).tdp
+            if (tdp && tdp > 0) total += tdp
+            else total += 65
           } else if (item.component.category === 'gpu') {
-            total += (item.component as any).tdp || 150
+            const tdp = (item.component as any).tdp
+            if (tdp && tdp > 0) total += tdp
+            else total += 150
           } else if (item.component.category === 'storage') {
             total += 10
           } else if (item.component.category === 'ram') {
             total += 10
           } else if (item.component.category === 'cooler') {
             total += 5
+          } else if (item.component.category === 'motherboard') {
+            total += 25
           }
         })
         return total
@@ -348,6 +604,20 @@ export const useAppStore = create<AppState>()(
         const id = get().currentBuildId
         if (!id) return null
         return get().builds.find((b) => b.id === id) ?? null
+      },
+
+      getBuildsByCategory: (category) => {
+        if (category === 'all') return [...get().builds]
+        return get().builds.filter((b) =>
+          b.components.some(
+            (s) => s.category === category && s.componentId !== null
+          )
+        )
+      },
+
+      refreshAllEstimates: (buildId) => {
+        get().runCompatibilityCheck(buildId)
+        get().runPerformanceEstimate(buildId)
       },
     }),
     {

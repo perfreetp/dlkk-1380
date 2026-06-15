@@ -6,14 +6,26 @@ import PerformancePage from '@/pages/PerformancePage'
 import QuotePage from '@/pages/QuotePage'
 import ComparePage from '@/pages/ComparePage'
 import FavoritesPage from '@/pages/FavoritesPage'
+import CompatibilityPage from '@/pages/CompatibilityPage'
+import BudgetPage from '@/pages/BudgetPage'
 import BuildSidebar from '@/components/BuildSidebar'
 import type { ComponentCategory } from '@/types'
 
-type PageKey = 'library' | 'builder' | 'performance' | 'quote' | 'compare' | 'favorites'
+type PageKey =
+  | 'library'
+  | 'builder'
+  | 'compatibility'
+  | 'budget'
+  | 'performance'
+  | 'quote'
+  | 'compare'
+  | 'favorites'
 
 const NAV_ITEMS: { key: PageKey; label: string; icon: string }[] = [
   { key: 'library', label: '配件库', icon: '📦' },
   { key: 'builder', label: '方案编辑', icon: '🔧' },
+  { key: 'compatibility', label: '兼容检查', icon: '⚠️' },
+  { key: 'budget', label: '预算控制', icon: '💰' },
   { key: 'performance', label: '性能估算', icon: '📊' },
   { key: 'quote', label: '报价单', icon: '📄' },
   { key: 'compare', label: '方案对比', icon: '⚖️' },
@@ -42,6 +54,10 @@ function App() {
         return <ComponentsLibrary />
       case 'builder':
         return <BuildEditor />
+      case 'compatibility':
+        return <CompatibilityPage />
+      case 'budget':
+        return <BudgetPage />
       case 'performance':
         return <PerformancePage />
       case 'quote':
@@ -53,7 +69,12 @@ function App() {
     }
   }
 
-  const showSidebar = currentPage === 'builder' || currentPage === 'performance' || currentPage === 'quote'
+  const showSidebar =
+    currentPage === 'builder' ||
+    currentPage === 'compatibility' ||
+    currentPage === 'budget' ||
+    currentPage === 'performance' ||
+    currentPage === 'quote'
 
   return (
     <div className="app">
